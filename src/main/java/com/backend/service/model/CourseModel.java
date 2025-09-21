@@ -2,16 +2,19 @@ package com.backend.service.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 
+import java.sql.Timestamp;
 import java.util.Date;
 import java.util.List;
 
 @Getter
 @Setter
+@Builder
 @Document(collection = "courses")
 public class CourseModel {
     @Id

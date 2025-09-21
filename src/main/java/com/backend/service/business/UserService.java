@@ -1,144 +1,169 @@
 package com.backend.service.business;
 
-import com.backend.service.config.FirebaseConfig;
 import com.backend.service.model.UserModel;
 import com.google.api.core.ApiFuture;
+import com.google.cloud.Timestamp;
 import com.google.cloud.firestore.*;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseAuthException;
 import com.google.firebase.auth.FirebaseToken;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Executor;
+import java.util.concurrent.*;
+
+import static org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR;
 
 @Service
 public class UserService {
+
+    private static final Logger logger = LoggerFactory.getLogger(UserService.class);
 
     @Autowired
     private Firestore firestore;
 
     @Autowired
-
     private FirebaseAuth firebaseAuth;
 
     @Autowired
     private Executor asyncExecutor;
 
-    public Map<String, Object> decodeFirebaseToken(String idToken) throws Exception {
+    public Map<String, Object> decodeFirebaseToken(String idToken) {
         try {
             FirebaseToken decodedToken = firebaseAuth.verifyIdToken(idToken);
+            String uid = decodedToken.getUid( );
+            Map<String, Object> claims = decodedToken.getClaims( );
 
-            String uid = decodedToken.getUid();
+            Object roleObj = claims != null ? claims.get("role") : null;
+            String role = roleObj != null ? roleObj.toString( ) : "visitor";
 
-            Object roleObj = firebaseAuth.getUser(uid).getCustomClaims().get("role");
-            String role = (roleObj != null) ? roleObj.toString() : "visitor";
-
-            // Prepare user info response
-            Map<String, Object> userInfo = new HashMap<>();
+            Map<String, Object> userInfo = new HashMap<>( );
             userInfo.put("uid", uid);
-            userInfo.put("email", decodedToken.getEmail());
-
-            // If the returned role is null, set it to "visitor"
-            // AUTHORIZATION
+            userInfo.put("email", decodedToken.getEmail( ));
+            userInfo.put("name", decodedToken.getName( ));
+            userInfo.put("picture", decodedToken.getPicture( ));
             userInfo.put("role", role);
-            
-            // Process Firestore operations asynchronously
-            String finalRole = role;
+
             asyncExecutor.execute(() -> {
                 try {
-                    checkAndCreateUser(decodedToken, finalRole);
+                    checkAndCreateUser(decodedToken, role);
                 } catch (Exception e) {
-                    System.err.println("Error processing user in Firestore: " + e.getMessage());
+                    logger.error("Error processing user in Firestore: {}", e.getMessage( ), e);
                 }
             });
-            
+
             return userInfo;
         } catch (FirebaseAuthException e) {
-            throw new Exception("Invalid token");
+            logger.error("Firebase auth error: {}", e.getMessage( ), e);
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid or expired token");
+        } catch (Exception e) {
+            logger.error("Error decoding token: {}", e.getMessage( ), e);
+            throw new ResponseStatusException(INTERNAL_SERVER_ERROR, "Error processing authentication");
         }
     }
-    
+
     @Async
-    private void checkAndCreateUser(FirebaseToken decodedToken, String role) throws ExecutionException, InterruptedException, FirebaseAuthException {
-        String uid = decodedToken.getUid();
+    protected void checkAndCreateUser(FirebaseToken decodedToken, String role) {
+        String uid = decodedToken.getUid( );
         DocumentReference userRef = firestore.collection("users").document(uid);
-        ApiFuture<DocumentSnapshot> future = userRef.get();
-        DocumentSnapshot document = future.get();
 
-        if (firebaseAuth.getUser(uid).getCustomClaims().get("role") == null) {
-            firebaseAuth.setCustomUserClaims(uid, Map.of("role", role));
-        }
+        try {
+            ApiFuture<DocumentSnapshot> future = userRef.get( );
+            DocumentSnapshot document = future.get( );
 
-        if (!document.exists()) {
-            Map<String, Object> userData = new HashMap<>();
-            userData.put("id", uid);
-            userData.put("email", decodedToken.getEmail());
-            userData.put("displayName", decodedToken.getName() != null ? decodedToken.getName() : "");
-            userData.put("role", role);
+            if (!document.exists( )) {
+                UserModel.UserProfile profile = UserModel.UserProfile.builder( )
+                        .college("")
+                        .year("")
+                        .avatarUrl(decodedToken.getPicture( ) != null ? decodedToken.getPicture( ) : "")
+                        .build( );
 
-            Map<String, Object> profile = new HashMap<>();
-            profile.put("college", "");
-            profile.put("year", "");
-            profile.put("avatarUrl", decodedToken.getPicture() != null ? decodedToken.getPicture() : "");
-            userData.put("profile", profile);
-            
-            Map<String, Object> courseTrack = new HashMap<>();
-            userData.put("courseTrack", courseTrack);
-            
-            userData.put("createdAt", FieldValue.serverTimestamp());
-            
-            userRef.set(userData);
+                UserModel newUser = UserModel.builder( )
+                        .id(uid)
+                        .email(decodedToken.getEmail( ))
+                        .displayName(decodedToken.getName( ))
+                        .role(role)
+                        .profile(profile)
+                        .courseTrack(new HashMap<>( ))
+                        .createdAt(Timestamp.now( ))
+                        .build( );
 
+                ApiFuture<WriteResult> writeResult = userRef.set(newUser);
+                writeResult.get( );
+                logger.info("Created new user with UID: {}", uid);
+            }
+        } catch (Exception e) {
+            logger.error("Error in checkAndCreateUser: {}", e.getMessage( ), e);
+            throw new ResponseStatusException(INTERNAL_SERVER_ERROR, "Error creating user", e);
         }
     }
 
-    public Map<String, Object> requestCreator(String idToken) throws Exception {
+    public Map<String, Object> requestCreator(String idToken) {
         try {
-            FirebaseToken decodedToken = firebaseAuth.verifyIdToken(idToken);
-            String uid = decodedToken.getUid();
+                FirebaseToken decodedToken = firebaseAuth.verifyIdToken(idToken);
+                String uid = decodedToken.getUid( );
 
-            // Get current claims in a single operation
-            Map<String, Object> currentClaims = firebaseAuth.getUser(uid).getCustomClaims();
-            String currentRole = (String) currentClaims.getOrDefault("role", "visitor");
+                // Get current claims in a single operation
+                Map<String, Object> claims = decodedToken.getClaims( );
+                Object roleObj = claims != null ? claims.get("role") : null;
+                String role = roleObj != null ? roleObj.toString( ) : "visitor";
 
-            // Only allow visitors to request creator role
-            if (!"visitor".equals(currentRole)) throw new IllegalStateException("Only users with 'visitor' role can request creator access");
+                // Only allow visitors to request creator role
+                if (!"visitor".equals(role)) {
+                    throw new IllegalStateException("Only users with 'visitor' role can request creator access");
+                }
 
-            // Update Firebase Auth claims
-            Map<String, Object> newClaims = new HashMap<>(currentClaims); // Preserve existing claims
-            newClaims.put("role", "creator");
-            firebaseAuth.setCustomUserClaims(uid, newClaims);
+                // Update Firebase Auth claims
+                Map<String, Object> newClaims = new HashMap<>();
+                newClaims.put("role", "creator");
 
-            // Update Firestore
-            try {
-                firestore.collection("users").document(uid)
-                        .update("role", "creator")
-                        .get(); // Wait for completion
+                // Update Firestore asynchronously
+                asyncExecutor.execute(() -> {
+                    try {
+                       firestoreCreatorUpdate(uid, newClaims);
+                    } catch (Exception e) {
+                        logger.error("Error updating Firestore: {}", e.getMessage( ), e);
+                    }
+                });
+
+                // Return success response
+                Map<String, Object> response = new HashMap<>( );
+                response.put("success", true);
+                response.put("message", "Successfully upgraded to creator role");
+                response.put("uid", uid);
+                response.put("newRole", "creator");
+
+                return response;
+
+            } catch (FirebaseAuthException e) {
+                throw new CompletionException("Authentication error: " + e.getMessage( ), e);
             } catch (Exception e) {
-                // Revert claims if Firestore update fails
-                firebaseAuth.setCustomUserClaims(uid, currentClaims);
-                throw new Exception("Failed to update Firestore", e);
+                throw new CompletionException("Failed to process creator request: " + e.getMessage( ), e);
             }
 
-            // Return success response
-            Map<String, Object> response = new HashMap<>();
-            response.put("success", true);
-            response.put("message", "Successfully upgraded to creator role");
-            response.put("uid", uid);
-            response.put("newRole", "creator");
-
-            return response;
-
-        } catch (FirebaseAuthException e) {
-            throw new Exception("Authentication error: " + e.getMessage());
-        } catch (Exception e) {
-            throw new Exception("Failed to process creator request: " + e.getMessage());
-        }
     }
 
+    @Async
+    private void firestoreCreatorUpdate(String uid, Map<String, Object> newClaims) {
+        try {
+            firebaseAuth.setCustomUserClaims(uid, newClaims);
+            firestore.collection("users").document(uid)
+                    .update("role", "creator")
+                    .get();
+        } catch (ExecutionException e) {
+            logger.error("Error executing Firestore update: {}", e.getMessage( ), e);
+        } catch (InterruptedException e) {
+            logger.error("Error waiting for Firestore update: {}", e.getMessage( ), e);
+            Thread.currentThread().interrupt();
+        } catch (FirebaseAuthException e) {
+            logger.error("Error updating Firebase Auth claims: {}", e.getMessage( ), e);
+        }
+    }
 }

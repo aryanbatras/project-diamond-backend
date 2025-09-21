@@ -1,0 +1,13 @@
+spring:
+  application:
+    name: service
+  data:
+    mongodb:
+      uri: {$MONGODB_URI}
+      auto-index-creation: true
+
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    path: /swagger-ui.html
