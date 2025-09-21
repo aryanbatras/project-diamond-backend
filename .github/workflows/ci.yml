@@ -34,8 +34,16 @@ jobs:
       - name: Build & run tests
         run: mvn -B -DskipTests=false clean verify
 
+      - name: SonarQube Scan (action)
+        if: ${{ secrets.SONAR_TOKEN != '' }}
+        uses: SonarSource/sonarqube-scan-action@master
+        with:
+          args: -Dsonar.login=${{ secrets.SONAR_TOKEN }}
+
       - name: Upload test results (artifact)
         uses: actions/upload-artifact@v4
         with:
           name: test-results
           path: target/surefire-reports/
+
+    
