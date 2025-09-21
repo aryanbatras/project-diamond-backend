@@ -1,0 +1,7 @@
+spring:
+  application:
+    name: service
+  data:
+    mongodb:
+      uri: mongodb+srv://admin:admin@cluster0.4cwdoqu.mongodb.net/test?retryWrites=true&w=majority&appName=Cluster0
+      auto-index-creation: true
