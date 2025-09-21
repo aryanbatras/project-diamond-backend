@@ -35,11 +35,8 @@ jobs:
       - name: Build & run tests
         run: mvn -B -DskipTests=false clean verify
 
-      - name: SonarQube Scan (action)
-        if: ${{ env.SONAR_TOKEN != '' }}
-        uses: SonarSource/sonarqube-scan-action@master
-        with:
-          args: -Dsonar.login=${{ env.SONAR_TOKEN }}
+      - name: SonarCloud Scan (Maven plugin)
+        run: mvn -B verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar -DskipTests=false -Dsonar.token=${{ env.SONAR_TOKEN }}
 
       - name: Upload test results (artifact)
         uses: actions/upload-artifact@v4
