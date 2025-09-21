@@ -3,7 +3,7 @@ spring:
     name: service
   data:
     mongodb:
-      uri: {$MONGODB_URI}
+      uri: ${MONGODB_URI}
       auto-index-creation: true
 
 springdoc:
