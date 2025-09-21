@@ -1,5 +1,9 @@
 name: CI - Build & Test
 
+env:
+  FIREBASE_CREDENTIALS_BASE64: ${{ secrets.FIREBASE_CREDENTIALS_BASE64 }}
+  MONGODB_URI: ${{ secrets.MONGODB_URI }}
+  
 on:
   pull_request:
     branches: [ main ]
